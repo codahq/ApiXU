@@ -357,6 +357,7 @@ def updateLux()     {
 	def tZ = TimeZone.getTimeZone(state.tz_id)
 	def lT = new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
 	def localTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", lT, tZ)
+
 	def sunriseTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", state.sunriseTime, tZ)
 	def sunsetTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", state.sunsetTime, tZ)
 	def noonTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", state.noonTime, tZ)
@@ -460,24 +461,36 @@ def calcTime(wxData) {
 	now = new Date().format('yyyy-MM-dd HH:mm', location.timeZone)
 	
 	tZ = TimeZone.getTimeZone(wxData.location.tz_id)
-	state.tz_id = wxData.location.tz_id
 	localTime = new Date().parse("yyyy-MM-dd HH:mm", wxData.location.localtime, tZ)
 	localDate = localTime.format("yyyy-MM-dd", tZ)
 	localTimeOnly = localTime.format("HH:mm", tZ)
 
-	def sunriseAndSunset = getSunriseAndSunset(wxData.location.lat, wxData.location.lon, localDate)
-	sunriseTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.sunrise, tZ)
-	sunsetTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.sunset, tZ)
-	noonTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.solar_noon, tZ)
-	twilight_begin = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.civil_twilight_begin, tZ)
-	twilight_end = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.civil_twilight_end, tZ)
-	localSunrise = sunriseTime.format("HH:mm", tZ)
-	localSunset = sunsetTime.format("HH:mm", tZ)
-	tB = twilight_begin.format("HH:mm", tZ)
-	tE = twilight_end.format("HH:mm", tZ)
+	// there's no need to calculate sunrise, sunset, twilight, noon, etc. a hundred times a day.
+	// once just after midnight should be good enough.
+	if ( state.tz_id && (localTimeOnly >= '00:10') ) { 
+		def sunriseAndSunset = getSunriseAndSunset(wxData.location.lat, wxData.location.lon, localDate)
+		sunriseTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.sunrise, tZ)
+		sunsetTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.sunset, tZ)
+		noonTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.solar_noon, tZ)
+		twilight_begin = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.civil_twilight_begin, tZ)
+		twilight_end = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.civil_twilight_end, tZ)
+		localSunrise = sunriseTime.format("HH:mm", tZ)
+		localSunset = sunsetTime.format("HH:mm", tZ)
+		tB = twilight_begin.format("HH:mm", tZ)
+		tE = twilight_end.format("HH:mm", tZ)
+		state.tz_id = wxData.location.tz_id  // also used to indicate been here once
+		state.sunriseTime = sunriseTime.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
+		state.sunsetTime = sunsetTime.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
+		state.noonTime = noonTime.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
+		state.twilight_begin = twilight_begin.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
+		state.twilight_end = twilight_end.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
+	}
+	
 	imgName = getImgName(wxData.current.condition.code, wxData.current.is_day)
 	imgNamePlus1 = getImgName(wxData.forecast.forecastday[0].day.condition.code, 1)
 	wind_mytile=(isFahrenheit ? "${Math.round(wxData.current.wind_mph)}" + " mph " : "${Math.round(wxData.current.wind_kph)}" + " kph ")
+	state.condition_code = wxData.current.condition.code
+	state.cloud = wxData.current.cloud
 
 	mytext = wxData.location.name + ', ' + wxData.location.region
 	mytext += '<br>' + (isFahrenheit ? "${Math.round(wxData.current.temp_f)}" + '&deg;F ' : wxData.current.temp_c + '&deg;C ') + wxData.current.humidity + '%'
@@ -485,13 +498,6 @@ def calcTime(wxData) {
 	mytext += (wind_mytile == (isFahrenheit ? "0 mph " : "0 kph ") ? '<br> Wind is calm' : '<br>' + wxData.current.wind_dir + ' ' + wind_mytile)
 	mytext += '<br>' + wxData.current.condition.text
 
-	state.sunriseTime = sunriseTime.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
-	state.sunsetTime = sunsetTime.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
-	state.noonTime = noonTime.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
-	state.twilight_begin = twilight_begin.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
-	state.twilight_end = twilight_end.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
-	state.condition_code = wxData.current.condition.code
-	state.cloud = wxData.current.cloud
 }
 
 private timeOfDayIsBetween(fromDate, toDate, checkDate, timeZone)     {
@@ -545,7 +551,7 @@ def getOWIconName(condition_code, is_day)     {
 }
 
 private getImgName(wCode, is_day)       {
-	def url = "https://raw.githubusercontent.com/csteele-PD/Hubitat-master/master/docs/weather/0.png"
+	def url = "https://raw.githubusercontent.com/csteele-PD/ApiXU/master/docs/weather/"
 	def imgItem = imgNames.find{ it.code == wCode && it.day == is_day }
 	return (url + (imgItem ? imgItem.img : 'na.png'))
 }
