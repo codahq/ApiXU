@@ -5,9 +5,14 @@
 *
 ***********************************************************************************************************************/
 
-public static String version()      {  return "v1.1.1"  }
+public static String version()      {  return "v1.1.2"  }
 
 /***********************************************************************************************************************
+*
+* Version: 1.1.2
+*                prevent calculating sunrise, sunset, twilight, noon, etc. a hundred times a day
+*                added 1 and 3 hour options on Poll() - allowing RM for poll-on-demand
+*                converted SunriseAndSet to asynchttp call
 *
 * Version: 1.1.1
 *                removed 'configure' as a command, refresh & poll are adequate.
@@ -17,7 +22,7 @@ public static String version()      {  return "v1.1.1"  }
 *                renamed wx-ApiXU-Driver
 *                reworked Poll and UpdateLux to use common code
 *                reworked metadata to build the attributes needed
-*                converted to asynchttp call
+*                converted Poll to asynchttp call
 *                duplicated attributes for OpenWX compatibility with Dashboard Weather Template
 *
 /***********************************************************************************************************************
@@ -60,80 +65,7 @@ public static String version()      {  return "v1.1.1"  }
 * - no personal weather station needed
 *
 *
-* Version: 5.1.4
-*                added precipication forecast data from day - 2 to day + 2
-*                removed selector for duplicate sunrise/sunset (localSunrise == local_sunrise)
-*
-* Version: 5.1.3
-*                alternating description for settingEnabled input
-*
-* Version: 5.1.2
-*                merged codahq's child device code -- with switch.
-*
-* Version: 5.1.1
-*                merged Bangali's v5.0.2 - 5.0.5
-*
-* Version: 5.1.0
-*	4/20/2019: extend attributesMap to contain keyname, title, descr and default
-*                add debug logging and auto disable
-*                add settings visibility and auto disable
-*
-** Version: 5.0.5
-*	5/4/2019: fixed typos for feelsLike* and added condition code for day plus 1 forecasted data.
-*
-* Version: 5.0.2
-*	4/20/2019: allow selection for publishing feelsLike and wind attributes
-*
-* Version: 5.0.1
-*	3/24/2019: revert typo
-*
-* Version: 5.0.0
-*	3/10/2019: allow selection of which attributes to publish
-*	3/10/2019: restore localSunrise and localSunset attributes
-*   3/10/2019: added option for lux polling interval
-*   3/10/2019: added expanded weather polling interval
-*
-* Version: 4.3.1
-*   1/20/2019: change icon size for mytile attribute
-*
-* Version: 4.3.0
-*   12/30/2018: removed isStateChange:true based on testing done by @nh.schottfam on hubitat format
-*
-* Version: 4.2.0
-*   12/30/2018: deprecated localSunrise and localSunset attributes instead use local_sunrise and local_sunset respectively
-*
-* Version: 4.1.0
-*   12/29/2018: merged mytile code
-*
-* Version: 4.0.3
-*   12/09/2018: added wind speed in MPS (meters per second)
-*
-* Version: 4.0.2
-*   10/28/2018: continue publishing lux even if apixu api call fails.
-*
-* Version: 4.0.1
-*   10/14/2018: removed logging of weather data.
-*
-* Version: 4.0.0
-*   8/16/2018: added optional weather undergroud mappings.
-*   8/16/2018: added forecast icon, high and low temperature for next day.
-*
-* Version: 3.5.0
-*   8/10/2018: added temperature, pressure and humidity capabilities.
-*
-* Version: 3.0.0
-*   7/25/2018: added code contribution from https://github.com/jebbett for new cooler weather icons with icons courtesy
-*                 of https://www.deviantart.com/vclouds/art/VClouds-Weather-Icons-179152045.
-*
-* Version: 2.5.0
-*   5/23/2018: update condition_icon to contain image for use on dashboard and moved icon url to condition_icon_url.
-*
-* Version: 2.0.0
-*   5/29/2018: updated lux calculation with factor from condition code.
-*
-* Version: 1.0.0
-*   5/27/2018: initial release.
-*
+* record of Bangali's version history prior to the Clone moved to the end of file.
 */
 
 import groovy.transform.Field
@@ -177,12 +109,13 @@ metadata    {
 		input "apixuKey",      "text", title:"ApiXU key?", required:true, defaultValue:null
 		input "cityName",      "text", title: "Override default city name?", required:false, defaultValue:null
 		input "isFahrenheit",  "bool", title:"Use Imperial units?", required:true, defaultValue:true
-		input "pollEvery",     "enum", title:"Poll ApiXU how frequently?\nrecommended setting 30 minutes.\nilluminance is always updated every 5 minutes.", required:true, defaultValue:30, options:[5:"5 minutes",10:"10 minutes",15:"15 minutes",30:"30 minutes"]
-		input "luxEvery",      "enum", title:"Publish illuminance how frequently?", required:true, defaultValue:5, options:[5:"5 minutes",10:"10 minutes",15:"15 minutes",30:"30 minutes"]
+		input "pollEvery",     "enum", title:"Poll ApiXU how frequently?\nrecommended setting 30 minutes.\nilluminance updating defaults to every 5 minutes.", required:false, defaultValue: 30, options:[5:"5 minutes",10:"10 minutes",15:"15 minutes",30:"30 minutes",60:"1 hour",180:"3 hours"]
+		input "luxEvery",      "enum", title:"Publish illuminance how frequently?", required:false, defaultValue: 5, options:[5:"5 minutes",10:"10 minutes",15:"15 minutes",30:"30 minutes"]
 		input "createChild",   "bool", title:"Create Child devices for Tomorrow's high and low temperatures?", required:true, defaultValue:false
 		input "settingEnable", "bool", title: "<b>Display All Preferences</b>", description: "$settingDescr", defaultValue: true
 		input "debugOutput",   "bool", title: "<b>Enable debug logging?</b>", defaultValue: true
 		
+	// build a Selector for each mapped Attribute or group of attributes
 		attributesMap.each
 		{
 			keyname, attribute ->
@@ -192,24 +125,42 @@ metadata    {
 }
 
 // helpers
-def refresh()	{ wxStart() }
-def poll()		{ wxStart() }
-//def configure()	{ wxStart() }
+def refresh()	{ poll() }
 
+
+/*
+	updated
+
+	Purpose: runs when save is clicked in the preferences section
+
+*/
 def updated()   {
 	unschedule()
 	state.tz_id = null
 	state.localDate = null
 	state.forecastPrecip = [date: null, precipDayMinus2:[in:999.9, mm:999.9], precipDayMinus1:[in:999.9, mm:999.9], precipDay0:[in:999.9, mm:999.9], precipDayPlus1:[in:999.9, mm:999.9], precipDayPlus2:[in:999.9, mm:999.9]]
 	state.clockSeconds = true
+	sunRiseAndSet = [:]
+	noonTime = null
 	if (debugOutput) runIn(1800,logsOff)
 	if (settingEnable) runIn(2100,SettingsOff)
-	"runEvery${pollEvery}Minutes"(wxStart)
+	if (pollEvery == "180") { "runEvery3Hours"(poll) }
+	 else if (pollEvery == "60") { "runEvery1Hour"(poll) }
+	 else { "runEvery${pollEvery}Minutes"(poll) }
 	"runEvery${luxEvery}Minutes"(updateLux)
 	if (dashClock)  updateClock();
     	log.info "Updated with settings: ${settings}"
+    	pollSunriseAndSunset()
+    	poll()
 }
 
+
+/*
+	doPoll
+
+	Purpose: build out the Attributes and add to Hub DB if selected
+
+*/
 def doPoll() {
 	log.info ">>>>> apixu: Executing 'poll', location: $zipCode"
 
@@ -293,6 +244,7 @@ def doPoll() {
 	return
 }
 
+
 private forecastPrecip(forecast)	{
 	if (!state.tz_id)       return;
 	def nowTime = new Date()
@@ -318,26 +270,27 @@ private forecastPrecip(forecast)	{
 	}
 }
 
+
 /*
-	wxStart
+	poll
 
 	Purpose: initiate the asynchtttpGet() call each poll cycle.
 
 	Notes: very, very simple, all the action is in the handler.
 */
-def wxStart()   {
+def poll()   {
 	def requestParams = [ uri: "https://api.apixu.com/v1/forecast.json?key=$apixuKey&q=$zipCode&days=3" ]
-	asynchttpGet("asyncHTTPHandler", requestParams)
+	asynchttpGet("pollHandler", requestParams)
 }
 
 /*
-	asyncHTTPHandler
+	pollHandler
 
 	Purpose: called with the APIXU website response
 
 	Notes: a good response will be processed by doPoll()
 */
-def asyncHTTPHandler(resp, data) {
+def pollHandler(resp, data) {
 	if(resp.getStatus() == 200 || resp.getStatus() == 207) {
 		obs = parseJson(resp.data)
 		doPoll()		// parse the data returned by ApiXU
@@ -348,26 +301,67 @@ def asyncHTTPHandler(resp, data) {
 }
 
 
+
+/*
+	pollSunriseAndSunset
+
+	Purpose: initiate the asynchtttpGet() call each poll cycle.
+
+	Notes: very, very simple. only needs to run once per day.
+*/
+def pollSunriseAndSunset() {
+	if (sunRiseAndSet == null || noonTime?.take(10) != localDate) {
+		if (obs == null) {
+			requestParams = [ uri: "https://api.sunrise-sunset.org/json?lat=$location.latitude&lng=$location.longitude&date=$localDate&formatted=0" ]
+		} else {
+			requestParams = [ uri: "https://api.sunrise-sunset.org/json?lat=$obs.location.lat&lng=$obs.location.lon&date=$localDate&formatted=0" ]
+		} 
+		asynchttpGet("sunRiseAndSetHandler", requestParams)
+	}
+}
+
+
+/*
+	sunRiseAndSetHandler
+
+	Purpose: contact Sunrise-Sunset website to get our events
+
+	Notes: 
+*/
+def sunRiseAndSetHandler(resp, data) {
+	if(resp.getStatus() == 200 || resp.getStatus() == 207) {
+		def sunRiseAndSet = resp.getJson()
+		sunriseTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.sunrise, tZ)
+		sunsetTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.sunset, tZ)
+		noonTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.solar_noon, tZ)
+		twilight_begin = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.civil_twilight_begin, tZ)
+		twilight_end = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.civil_twilight_end, tZ)
+	} else {
+		log.error "http call failed for sunrise and sunset api: $resp"
+		return null
+	}
+}
+
+
+/*
+	updateLux
+
+	Purpose: calculate Lux / Illuminance / Illuminated offset by time of day
+	
+	Notes: minimum Lux is a value of 5 after dark.
+*/
 def updateLux()     {
-	log.info ">>>>> apixu: Executing 'lux', location: $zipCode"
+	log.info ">>>>> apixu: Calculating 'lux', location: $zipCode"
 	if (!state.sunriseTime || !state.sunsetTime || !state.noonTime || !state.twilight_begin || !state.twilight_end || !state.tz_id)
 	    return
 	
-//	calcTime()		// calculate all the time variables
-	def tZ = TimeZone.getTimeZone(state.tz_id)
-	def lT = new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
-	def localTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", lT, tZ)
-
-	def sunriseTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", state.sunriseTime, tZ)
-	def sunsetTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", state.sunsetTime, tZ)
-	def noonTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", state.noonTime, tZ)
-	def twilight_begin = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", state.twilight_begin, tZ)
-	def twilight_end = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", state.twilight_end, tZ)
+	calcTime()		// calculate all the time variables
 
 	def lux = estimateLux(localTime, sunriseTime, sunsetTime, noonTime, twilight_begin, twilight_end, state.condition_code, state.cloud, state.tz_id)
 	sendEventPublish(name: "illuminance", value: lux, unit: "lux", displayed: true)
 	sendEventPublish(name: "illuminated", value: String.format("%,d lux", lux), displayed: true)
 }
+
 
 private estimateLux(localTime, sunriseTime, sunsetTime, noonTime, twilight_begin, twilight_end, condition_code, cloud, tz_id)     {
 	if (debugOutput) log.debug "condition_code: $condition_code | cloud: $cloud"
@@ -429,6 +423,7 @@ private estimateLux(localTime, sunriseTime, sunsetTime, noonTime, twilight_begin
 	return lux
 }
 
+
 def updateChildren() {
 	if (createChild) 
 	{
@@ -446,16 +441,13 @@ def updateChildren() {
 	}
 }
 
-private getSunriseAndSunset(latitude, longitude, forDate)	{
-	def params = [ uri: "https://api.sunrise-sunset.org/json?lat=$latitude&lng=$longitude&date=$forDate&formatted=0" ]
-	def sunRiseAndSet = [:]
-	try {
-	    httpGet(params)		{ resp -> sunRiseAndSet = resp.data }
-	} catch (e) { log.error "http call failed for sunrise and sunset api: $e" }
-	
-	return sunRiseAndSet
-}
 
+/*
+	calcTime
+
+	Purpose: calculate all the sunrise, sunset, twilight, etc. values, once each day.
+	
+*/
 def calcTime(wxData) {
 
 	now = new Date().format('yyyy-MM-dd HH:mm', location.timeZone)
@@ -468,12 +460,6 @@ def calcTime(wxData) {
 	// there's no need to calculate sunrise, sunset, twilight, noon, etc. a hundred times a day.
 	// once just after midnight should be good enough.
 	if ( state.tz_id && (localTimeOnly >= '00:10') ) { 
-		def sunriseAndSunset = getSunriseAndSunset(wxData.location.lat, wxData.location.lon, localDate)
-		sunriseTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.sunrise, tZ)
-		sunsetTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.sunset, tZ)
-		noonTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.solar_noon, tZ)
-		twilight_begin = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.civil_twilight_begin, tZ)
-		twilight_end = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunriseAndSunset.results.civil_twilight_end, tZ)
 		localSunrise = sunriseTime.format("HH:mm", tZ)
 		localSunset = sunsetTime.format("HH:mm", tZ)
 		tB = twilight_begin.format("HH:mm", tZ)
@@ -500,9 +486,11 @@ def calcTime(wxData) {
 
 }
 
+
 private timeOfDayIsBetween(fromDate, toDate, checkDate, timeZone)     {
 	return (!checkDate.before(fromDate) && !checkDate.after(toDate))
 }
+
 
 
 def logsOff(){
@@ -510,11 +498,19 @@ def logsOff(){
 	device.updateSetting("debugOutput",[value:"false",type:"bool"])
 }
 
+
 def SettingsOff(){
 	log.warn "Settings disabled..."
 	device.updateSetting("settingEnable",[value:"false",type:"bool"])
 }
 
+
+/*
+	sendEventPublish
+
+	Purpose: Attribute sent to DB if selected
+	
+*/
 def sendEventPublish(evt)	{
 	if (this[evt.name + "Publish"]) {
 		sendEvent(name: evt.name, value: evt.value, descriptionText: evt.descriptionText, unit: evt.unit, displayed: evt.displayed);
@@ -522,6 +518,13 @@ def sendEventPublish(evt)	{
 	}
 }
 
+
+/*
+	updateClock
+
+	Purpose: implements a blinking : in a dashboard clock
+	
+*/
 def updateClock()       {
 	runIn(2, updateClock)
 	if (!state.tz_id)       return;
@@ -537,15 +540,21 @@ def updateClock()       {
 	state.clockSeconds = (state.clockSeconds ? false : true)
 }
 
+
 def getWUIconName(condition_code, is_day)     {
     def wuIcon = (conditionFactor[condition_code] ? conditionFactor[condition_code][2] : '')
     if (is_day != 1 && wuIcon)    wuIcon = 'nt_' + wuIcon;
     return wuIcon
 }
 
-// Hubitat's Weather template for Dashboard is OpenWeather icon friendly ONLY.
+
+/*
+	getOWIconName
+
+	Purpose: Hubitat's Weather template for Dashboard is OpenWeather icon friendly ONLY.
+
+*/
 def getOWIconName(condition_code, is_day)     {
-//    def wIcon = conditionFactorOW[condition_code] ? conditionFactorOW[condition_code] : ''
     def wIcon = conditionFactor[condition_code] ? conditionFactor[condition_code][3] : ''
     return is_day ? wIcon + 'd' : wIcon + 'n'
 }
@@ -555,6 +564,7 @@ private getImgName(wCode, is_day)       {
 	def imgItem = imgNames.find{ it.code == wCode && it.day == is_day }
 	return (url + (imgItem ? imgItem.img : 'na.png'))
 }
+
 
 @Field static childrenMap = [
 	temperatureLowDayPlus1:  [name: "Low Temperature next 24 hours"],
@@ -690,7 +700,7 @@ private getImgName(wCode, is_day)       {
 
 @Field static attributesMap = [
 	"cCF":				[title: "Cloud cover factor", descr: "", default: "false"],
-	"city":				[title: "City", descr: "Select City to display your City's name:", default: "true"],
+	"city":				[title: "City", descr: "Display your City's name?", default: "true"],
 	"cloud":				[title: "Cloud", descr: "", default: "false"],
 	"condition_code":			[title: "Condition code", descr: "", default: "false"],
 	"condition_icon_only":		[title: "Condition icon only", descr: "", default: "false"],
@@ -704,8 +714,8 @@ private getImgName(wCode, is_day)       {
 	"feelslike":			[title: "Feels like (in default unit)", descr: "Select to display the 'feels like' temperature:", default: "true"],
 	"forecastIcon":			[title: "Forecast icon", descr: "Select to display an Icon of the Forecast Weather:", default: "true"],
 	"humidity":				[title: "Humidity", descr: "Select to display the Humidity:", default: "true"],
-	"illuminance":			[title: "Illuminance", descr: "", default: "true"],
-	"illuminated":			[title: "Dashboard illuminance", descr: "", default: "true"],
+	"illuminance":			[title: "Illuminance", descr: "Lux value only", default: "true"],
+	"illuminated":			[title: "Illuminated", descr: "Illuminance with 'lux' added for use on a Dashboard", default: "true"],
 	"is_day":				[title: "Is daytime", descr: "", default: "false"],
 	"last_updated_epoch":		[title: "Last updated epoch", descr: "", default: "false"],
 	"last_updated":			[title: "Last updated", descr: "", default: "false"],
@@ -738,14 +748,93 @@ private getImgName(wCode, is_day)       {
 	"visualDayPlus1":			[title: "Visual weather day +1", descr: "Select to display tomorrow's visual of the Weather", default: "true"],
 	"visualDayPlus1WithText":	[title: "Visual weather day +1 with text", descr: "", default: "false"],
 	"visualWithText":			[title: "Visual weather with text", descr: "", default: "false"],
-	"weather":				[title: "Weather", descr: "", default: "false"],
-	"wind_degree":			[title: "Wind Degree", descr: "", default: "false"],
-	"wind_dir":				[title: "Wind direction", descr: "Select to display the Wind Direction", default: "true"],
+	"weather":				[title: "Weather", descr: "Current Conditions", default: "false"],
+	"wind_degree":			[title: "Wind Degree", descr: "Select to display the Wind Direction (number)", default: "false"],
+	"wind_dir":				[title: "Wind direction", descr: "Select to display the Wind Direction (letters)", default: "true"],
 	"wind_kph":				[title: "Wind KPH", descr: "", default: "false"],
 	"wind_mph":				[title: "Wind MPH", descr: "", default: "false"],
-	"wind_mps":				[title: "Wind MPS", descr: "", default: "false"],
+	"wind_mps":				[title: "Wind MPS", descr: "Wind in Meters per Second", default: "false"],
 	"wind_mytile":			[title: "Wind mytile", descr: "", default: "false"],
 	"wind":				[title: "Wind (in default unit)", descr: "Select to display the Wind Speed", default: "true"]
 ]
 
 //**********************************************************************************************************************
+
+/*
+* record of Bangali's version history prior to the Clone:
+*
+* Version: 5.1.4
+*                added precipication forecast data from day - 2 to day + 2
+*                removed selector for duplicate sunrise/sunset (localSunrise == local_sunrise)
+*
+* Version: 5.1.3
+*                alternating description for settingEnabled input
+*
+* Version: 5.1.2
+*                merged codahq's child device code -- with switch.
+*
+* Version: 5.1.1
+*                merged Bangali's v5.0.2 - 5.0.5
+*
+* Version: 5.1.0
+*	4/20/2019: extend attributesMap to contain keyname, title, descr and default
+*                add debug logging and auto disable
+*                add settings visibility and auto disable
+*
+** Version: 5.0.5
+*	5/4/2019: fixed typos for feelsLike* and added condition code for day plus 1 forecasted data.
+*
+* Version: 5.0.2
+*	4/20/2019: allow selection for publishing feelsLike and wind attributes
+*
+* Version: 5.0.1
+*	3/24/2019: revert typo
+*
+* Version: 5.0.0
+*	3/10/2019: allow selection of which attributes to publish
+*	3/10/2019: restore localSunrise and localSunset attributes
+*   3/10/2019: added option for lux polling interval
+*   3/10/2019: added expanded weather polling interval
+*
+* Version: 4.3.1
+*   1/20/2019: change icon size for mytile attribute
+*
+* Version: 4.3.0
+*   12/30/2018: removed isStateChange:true based on testing done by @nh.schottfam on hubitat format
+*
+* Version: 4.2.0
+*   12/30/2018: deprecated localSunrise and localSunset attributes instead use local_sunrise and local_sunset respectively
+*
+* Version: 4.1.0
+*   12/29/2018: merged mytile code
+*
+* Version: 4.0.3
+*   12/09/2018: added wind speed in MPS (meters per second)
+*
+* Version: 4.0.2
+*   10/28/2018: continue publishing lux even if apixu api call fails.
+*
+* Version: 4.0.1
+*   10/14/2018: removed logging of weather data.
+*
+* Version: 4.0.0
+*   8/16/2018: added optional weather undergroud mappings.
+*   8/16/2018: added forecast icon, high and low temperature for next day.
+*
+* Version: 3.5.0
+*   8/10/2018: added temperature, pressure and humidity capabilities.
+*
+* Version: 3.0.0
+*   7/25/2018: added code contribution from https://github.com/jebbett for new cooler weather icons with icons courtesy
+*                 of https://www.deviantart.com/vclouds/art/VClouds-Weather-Icons-179152045.
+*
+* Version: 2.5.0
+*   5/23/2018: update condition_icon to contain image for use on dashboard and moved icon url to condition_icon_url.
+*
+* Version: 2.0.0
+*   5/29/2018: updated lux calculation with factor from condition code.
+*
+* Version: 1.0.0
+*   5/27/2018: initial release.
+*
+*/
