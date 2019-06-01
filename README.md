@@ -1,7 +1,7 @@
 # ApiXU
 <p>
 <h2> Hubitat Driver to selectively acquire weather and attributes.</h2>
-<p>
+<p>This code is a Clone from Bangali's ApiXU Weather Driver (v5.4.1)<p>
 <h3>Attributes available:</h3>
 Cloud cover factor<br>
 City<br>
