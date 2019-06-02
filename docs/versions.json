@@ -1,0 +1,19 @@
+{
+        "Comment": "Last updated: 1/06/2019",
+        "copyright": " &#9400; 2019 csteele",
+        "versions": {
+                "Application": {
+                },
+                "Driver": {
+                        "wx-ApiXU-Driver": "1.1.2"
+                },
+
+                "UpdateInfo": {
+                        "Application": {
+                        },
+                        "Driver": {
+                        "wx-ApiXU-Driver": "Updated 1/06/2019"
+                        }
+                }
+        }
+}
