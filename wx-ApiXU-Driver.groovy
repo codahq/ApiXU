@@ -5,9 +5,14 @@
  *
  ***********************************************************************************************************************/
 
-public static String version() { return "v1.1.2" }
+public static String version() { return "v1.1.3" }
 
 /***********************************************************************************************************************
+ *
+ * Version: 1.1.3
+ *                removed the child devices because they aren't needed anymore. changed the precipitation
+ *                map variables from "in" to "inches" because "in" is a reserved groovy word and intellij
+ *                hated it.  put log.info behind a preference
  *
  * Version: 1.1.2
  *                prevent calculating sunrise, sunset, twilight, noon, etc. a hundred times a day
