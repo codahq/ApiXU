@@ -111,9 +111,9 @@ metadata {
     input "isFahrenheit", "bool", title: "Use Imperial units?", required: true, defaultValue: true
     input "pollEvery", "enum", title: "Poll ApiXU how frequently?\nrecommended setting 30 minutes.\nilluminance updating defaults to every 5 minutes.", required: false, defaultValue: 30, options: [5: "5 minutes", 10: "10 minutes", 15: "15 minutes", 30: "30 minutes", 60: "1 hour", 180: "3 hours"]
     input "luxEvery", "enum", title: "Publish illuminance how frequently?", required: false, defaultValue: 5, options: [5: "5 minutes", 10: "10 minutes", 15: "15 minutes", 30: "30 minutes"]
-    input "createChild", "bool", title: "Create Child devices for Tomorrow's high and low temperatures?", required: true, defaultValue: false
     input "settingEnable", "bool", title: "<b>Display All Preferences</b>", description: "$settingDescr", defaultValue: true
-    input "debugOutput", "bool", title: "<b>Enable debug logging?</b>", defaultValue: true
+    input "debugOutput", "bool", title: "<b>Enable debug logging?</b>", defaultValue: false
+    input "descriptionTextEnable", "bool", title: "<b>Enable descriptionText logging?</b>", defaultValue: true
 
     // build a Selector for each mapped Attribute or group of attributes
     attributesMap.each {
@@ -174,7 +174,7 @@ def updated() {
 */
 
 def doPoll() {
-  log.info ">>>>> apixu: Executing 'poll', location: $zipCode"
+  if (descriptionTextEnable) log.info ">>>>> apixu: Executing 'poll', location: $zipCode"
 
   calcTime(obs)    // calculate all the time variables
   sendEvent(name: "lastXUupdate", value: now, displayed: true)
@@ -252,7 +252,6 @@ def doPoll() {
   forecastPrecip(obs.forecast)
 
   sendEventPublish(name: "mytile", value: mytext, displayed: true)
-  if (createChild) updateChildren()
   return
 }
 
@@ -366,7 +365,7 @@ def sunRiseAndSetHandler(resp, data) {
 */
 
 def updateLux() {
-  log.info ">>>>> apixu: Calculating 'lux', location: $zipCode"
+  if (descriptionTextEnable) log.info ">>>>> apixu: Calculating 'lux', location: $zipCode"
   if (!state.sunriseTime || !state.sunsetTime || !state.noonTime || !state.twilight_begin || !state.twilight_end || !state.tz_id)
     return
 
@@ -436,23 +435,6 @@ private estimateLux(localTime, sunriseTime, sunsetTime, noonTime, twilight_begin
   sendEventPublish(name: "cCF", value: cCF, displayed: true)
 
   return lux
-}
-
-
-def updateChildren() {
-  if (createChild) {
-    childrenMap.each { attr ->
-      def expectedDNI = device.deviceNetworkId + "||" + attr.key
-      def d = getChildDevices()?.find {
-        it.deviceNetworkId == expectedDNI
-      }
-      if (!d) {
-        log.warn "Creating device '${attr.value.name}' with DNI ${expectedDNI}"
-        d = addChildDevice("hubitat_codahq", "Virtual Thermometer", expectedDNI, [label: attr.value.name])
-      }
-      d.sendEvent([name: "temperature", value: device.currentValue(attr.key)])
-    }
-  }
 }
 
 /*
@@ -578,11 +560,6 @@ private getImgName(wCode, is_day) {
   return (url + (imgItem ? imgItem.img : 'na.png'))
 }
 
-
-@Field static childrenMap = [
-  temperatureLowDayPlus1: [name: "Low Temperature next 24 hours"],
-  temperatureHighDayPlus1: [name: "High Temperature next 24 hours"]
-]
 
 @Field static conditionFactor = [
   1000: ['Sunny', 1, 'sunny', '01'], 1003: ['Partly cloudy', 0.8, 'partlycloudy', '03'],
