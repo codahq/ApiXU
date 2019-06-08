@@ -79,7 +79,7 @@ metadata {
   definition(name: "wx-ApiXU-Driver", namespace: "csteele", author: "bangali, csteele") {
     capability "Actuator"
     capability "Sensor"
-    capability "Polling"
+    capability "Refresh"
     capability "Illuminance Measurement"
     capability "Temperature Measurement"
     capability "Relative Humidity Measurement"
