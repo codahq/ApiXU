@@ -5,14 +5,14 @@
  *
  ***********************************************************************************************************************/
 
-public static String version() { return "v1.1.3" }
+public static String version()      {  return "v1.1.3"  }
 
 /***********************************************************************************************************************
  *
  * Version: 1.1.3
  *                removed the child devices because they aren't needed anymore. changed the precipitation
  *                map variables from "in" to "inches" because "in" is a reserved groovy word and intellij
- *                hated it.  put log.info behind a preference
+ *                hated it.  put log.info behind a preference -- thanks @codahq
  *
  * Version: 1.1.2
  *                prevent calculating sunrise, sunset, twilight, noon, etc. a hundred times a day
@@ -22,7 +22,7 @@ public static String version() { return "v1.1.3" }
  * Version: 1.1.1
  *                removed 'configure' as a command, refresh & poll are adequate.
  *                reorganized attributes into relationship groups with a single selector
- *
+ * 
  * Version: 1.0.0
  *                renamed wx-ApiXU-Driver
  *                reworked Poll and UpdateLux to use common code
@@ -38,9 +38,9 @@ public static String version() { return "v1.1.3" }
  *  Copyright 2018 bangali
  *
  *  Contributors:
- *    https://github.com/jebbett   code for new weather icons based on weather condition data
- *    https://www.deviantart.com/vclouds/art/VClouds-Weather-Icons-179152045   new weather icons courtesy of VClouds
- * 	  https://github.com/arnbme   code for mytile
+ *       https://github.com/jebbett      code for new weather icons based on weather condition data
+ *       https://www.deviantart.com/vclouds/art/VClouds-Weather-Icons-179152045     new weather icons courtesy of VClouds
+ *	  https://github.com/arnbme		code for mytile
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -119,7 +119,7 @@ metadata {
     input "settingEnable", "bool", title: "<b>Display All Preferences</b>", description: "$settingDescr", defaultValue: true
     input "debugOutput", "bool", title: "<b>Enable debug logging?</b>", defaultValue: false
     input "descriptionTextEnable", "bool", title: "<b>Enable descriptionText logging?</b>", defaultValue: true
-
+		input "descTextEnable","bool", title: "<b>Enable descriptionText logging?</b>", defaultValue: true
     // build a Selector for each mapped Attribute or group of attributes
     attributesMap.each {
       keyname, attribute ->
@@ -140,19 +140,17 @@ def refresh() { poll() }
 
 def updated() {
   unschedule()
-  state.tz_id = null
-  state.localDate = null
-  state.forecastPrecip = [
-    date: null,
-    precipDayMinus2: [inches: 999.9, mm: 999.9],
-    precipDayMinus1: [inches: 999.9, mm: 999.9],
-    precipDay0: [inches: 999.9, mm: 999.9],
-    precipDayPlus1: [inches: 999.9, mm: 999.9],
-    precipDayPlus2: [inches: 999.9, mm: 999.9]
-  ]
+	nowTime = new Date()
+	localDate = nowTime.format("yyyy-MM-dd", location.timeZone)
+	state.forecastPrecip = [
+	    date: null,
+	    precipDayMinus2: [inch: 999.9, mm: 999.9],
+	    precipDayMinus1: [inch: 999.9, mm: 999.9],
+	    precipDay0: 	   [inch: 999.9, mm: 999.9],
+	    precipDayPlus1:  [inch: 999.9, mm: 999.9],
+	    precipDayPlus2:  [inch: 999.9, mm: 999.9]
+	]
   state.clockSeconds = true
-  sunRiseAndSet = [:]
-  noonTime = null
   if (debugOutput) runIn(1800, logsOff)
   if (settingEnable) runIn(2100, SettingsOff)
   if (pollEvery == "180") {
@@ -166,9 +164,12 @@ def updated() {
   }
   "runEvery${luxEvery}Minutes"(updateLux)
   if (dashClock) updateClock();
-  log.info "Updated with settings: ${settings}"
-  pollSunriseAndSunset()
-  poll()
+	schedule("23 10 0 ? * * *", pollSunRiseAndSet)
+	if (descTextEnable) log.info "Updated with settings: ${settings}"
+	updateCheck()
+	schedule("0 0 8 ? * FRI *", updateCheck)
+	pollSunRiseAndSet()
+	runIn(2, poll) // give SunRiseAndSet a chance
 }
 
 /*
@@ -177,24 +178,28 @@ def updated() {
 	Purpose: build out the Attributes and add to Hub DB if selected
 
 */
-
-def doPoll() {
-  if (descriptionTextEnable) log.info ">>>>> apixu: Executing 'poll', location: $zipCode"
+def doPoll(obs) {
+	if (descTextEnable) log.info ">>>>> apixu: Executing 'poll', location: $zipCode"
 
   calcTime(obs)    // calculate all the time variables
   sendEvent(name: "lastXUupdate", value: now, displayed: true)
 
-  sendEventPublish(name: "local_sunrise", value: localSunrise, descriptionText: "Sunrise today is at $localSunrise", displayed: true)
-  sendEventPublish(name: "local_sunset", value: localSunset, descriptionText: "Sunset today at is $localSunset", displayed: true)
-  sendEventPublish(name: "twilight_begin", value: tB, descriptionText: "Twilight begins today at $tB", displayed: true)
-  sendEventPublish(name: "twilight_end", value: tE, descriptionText: "Twilight ends today at $tE", displayed: true)
+	if (localSunrisePublish) {
+		if (debugOutput) log.debug "localSunrise Group"
+		sendEvent(name: "local_sunrise", value: state.sunDetail.localSunrise, descriptionText: "Sunrise today is at $localSunrise", displayed: true)
+		sendEvent(name: "local_sunset", value: state.sunDetail.localSunset, descriptionText: "Sunset today at is $localSunset", displayed: true)
+		sendEvent(name: "localSunrise", value: state.sunDetail.localSunrise, displayed: true)
+		sendEvent(name: "localSunset", value: state.sunDetail.localSunset, displayed: true)
+	}
+	sendEventPublish(name: "twilight_begin", value: state.sunDetail.tB, descriptionText: "Twilight begins today at $tB", displayed: true)
+	sendEventPublish(name: "twilight_end", value: state.sunDetail.tE, descriptionText: "Twilight ends today at $tE", displayed: true)
 
   sendEventPublish(name: "name", value: obs.location.name, displayed: true)
   sendEventPublish(name: "region", value: obs.location.region, displayed: true)
   sendEventPublish(name: "country", value: obs.location.country, displayed: true)
   sendEventPublish(name: "lat", value: obs.location.lat, displayed: true)
   sendEventPublish(name: "lon", value: obs.location.lon, displayed: true)
-  sendEventPublish(name: "tz_id", value: obs.location.tz_id, displayed: true)
+	sendEventPublish(name: "tz_id", value: location.timeZone, displayed: true)
   sendEventPublish(name: "localtime_epoch", value: obs.location.localtime_epoch, displayed: true)
   sendEventPublish(name: "local_time", value: localTimeOnly, displayed: true)
   sendEventPublish(name: "local_date", value: localDate, displayed: true)
@@ -224,6 +229,7 @@ def doPoll() {
   }
 
   if (open_weatherPublish) {
+		if (debugOutput) log.debug "open_weather Group"
     sendEvent(name: "weatherIcons", value: getOWIconName(obs.current.condition.code, obs.current.is_day), displayed: true)
     sendEvent(name: "windSpeed", value: (isFahrenheit ? obs.current.wind_mph : obs.current.wind_kph), displayed: true)
     sendEvent(name: "windDirection", value: obs.current.wind_degree, displayed: true)
@@ -234,6 +240,7 @@ def doPoll() {
   sendEventPublish(name: "wind_dir", value: obs.current.wind_dir, displayed: true)
   sendEventPublish(name: "condition_icon_only", value: obs.current.condition.icon.split("/")[-1], displayed: true)
   sendEventPublish(name: "location", value: obs.location.name + ', ' + obs.location.region, displayed: true)
+	
   updateLux()
 
   sendEventPublish(name: "city", value: (cityName ?: obs.location.name), displayed: true)
@@ -242,8 +249,6 @@ def doPoll() {
   sendEventPublish(name: "feelsLike", value: (isFahrenheit ? obs.current.feelslike_f : obs.current.feelslike_c), unit: "${(isFahrenheit ? 'F' : 'C')}", displayed: true)
   sendEventPublish(name: "wind", value: (isFahrenheit ? obs.current.wind_mph : obs.current.wind_kph), unit: "${(isFahrenheit ? 'MPH' : 'KPH')}", displayed: true)
   sendEventPublish(name: "percentPrecip", value: (isFahrenheit ? obs.current.precip_in : obs.current.precip_mm), unit: "${(isFahrenheit ? 'IN' : 'MM')}", displayed: true)
-  sendEventPublish(name: "localSunrise", value: localSunrise, displayed: true)
-  sendEventPublish(name: "localSunset", value: localSunset, displayed: true)
 
   sendEventPublish(name: "wind_mytile", value: wind_mytile, displayed: true)
   sendEventPublish(name: "condition_codeDayPlus1", value: obs.forecast.forecastday[0].day.condition.code, displayed: true)
@@ -262,10 +267,9 @@ def doPoll() {
 
 
 private forecastPrecip(forecast) {
-  if (!state.tz_id) return;
+	if (!state.tz_id)   return;
   def nowTime = new Date()
-  def tZ = TimeZone.getTimeZone(state.tz_id)
-  def localDate = nowTime.format("yyyy-MM-dd", tZ)
+	def localDate = nowTime.format("yyyy-MM-dd", location.timeZone)
   if (localDate == state.forecastPrecip.date) return;
 
   state.forecastPrecip.date = localDate
@@ -273,16 +277,16 @@ private forecastPrecip(forecast) {
   state.forecastPrecip.precipDayMinus1 = state.forecastPrecip.precipDay0
   state.forecastPrecip.precipDay0 = state.forecastPrecip.precipDayPlus1
   state.forecastPrecip.precipDayPlus1.mm = forecast.forecastday[0].day.totalprecip_mm
-  state.forecastPrecip.precipDayPlus1.inches = forecast.forecastday[0].day.totalprecip_in
+	state.forecastPrecip.precipDayPlus1.inch = forecast.forecastday[0].day.totalprecip_in
   state.forecastPrecip.precipDayPlus2.mm = forecast.forecastday[1].day.totalprecip_mm
-  state.forecastPrecip.precipDayPlus2.inches = forecast.forecastday[1].day.totalprecip_in
+	state.forecastPrecip.precipDayPlus2.inch = forecast.forecastday[1].day.totalprecip_in
 
   if (precipExtendedPublish) {
-    sendEvent(name: "precipDayMinus2", value: (isFahrenheit ? state.forecastPrecip.precipDayMinus2.inches : state.forecastPrecip.precipDayMinus2.mm), unit: "${(isFahrenheit ? 'IN' : 'MM')}", displayed: true)
-    sendEvent(name: "precipDayMinus1", value: (isFahrenheit ? state.forecastPrecip.precipDayMinus1.inches : state.forecastPrecip.precipDayMinus1.mm), unit: "${(isFahrenheit ? 'IN' : 'MM')}", displayed: true)
-    sendEvent(name: "precipDay0", value: (isFahrenheit ? state.forecastPrecip.precipDay0.inches : state.forecastPrecip.precipDay0.mm), unit: "${(isFahrenheit ? 'IN' : 'MM')}", displayed: true)
-    sendEvent(name: "precipDayPlus1", value: (isFahrenheit ? state.forecastPrecip.precipDayPlus1.inches : state.forecastPrecip.precipDayPlus1.mm), unit: "${(isFahrenheit ? 'IN' : 'MM')}", displayed: true)
-    sendEvent(name: "precipDayPlus2", value: (isFahrenheit ? state.forecastPrecip.precipDayPlus2.inches : state.forecastPrecip.precipDayPlus2.mm), unit: "${(isFahrenheit ? 'IN' : 'MM')}", displayed: true)
+		sendEvent(name: "precipDayMinus2", value: (isFahrenheit ? state.forecastPrecip.precipDayMinus2.inch : state.forecastPrecip.precipDayMinus2.mm), unit: "${(isFahrenheit ? 'IN' : 'MM')}", displayed: true)
+		sendEvent(name: "precipDayMinus1", value: (isFahrenheit ? state.forecastPrecip.precipDayMinus1.inch : state.forecastPrecip.precipDayMinus1.mm), unit: "${(isFahrenheit ? 'IN' : 'MM')}", displayed: true)
+		sendEvent(name: "precipDay0", value: (isFahrenheit ? state.forecastPrecip.precipDay0.inch : state.forecastPrecip.precipDay0.mm), unit: "${(isFahrenheit ? 'IN' : 'MM')}", displayed: true)
+		sendEvent(name: "precipDayPlus1", value: (isFahrenheit ? state.forecastPrecip.precipDayPlus1.inch : state.forecastPrecip.precipDayPlus1.mm), unit: "${(isFahrenheit ? 'IN' : 'MM')}", displayed: true)
+		sendEvent(name: "precipDayPlus2", value: (isFahrenheit ? state.forecastPrecip.precipDayPlus2.inch : state.forecastPrecip.precipDayPlus2.mm), unit: "${(isFahrenheit ? 'IN' : 'MM')}", displayed: true)
   }
 }
 
@@ -297,6 +301,7 @@ private forecastPrecip(forecast) {
 def poll() {
   def requestParams = [uri: "https://api.apixu.com/v1/forecast.json?key=$apixuKey&q=$zipCode&days=3"]
   asynchttpGet("pollHandler", requestParams)
+	// log.debug "Poll ApiXU: $requestParms"
 }
 
 /*
@@ -310,7 +315,7 @@ def poll() {
 def pollHandler(resp, data) {
   if (resp.getStatus() == 200 || resp.getStatus() == 207) {
     obs = parseJson(resp.data)
-    doPoll()    // parse the data returned by ApiXU
+		doPoll(obs)		// parse the data returned by ApiXU
   }
   else {
     log.error "http call for ApiXU weather api did not return data: $resp"
@@ -319,15 +324,13 @@ def pollHandler(resp, data) {
 }
 
 /*
-	pollSunriseAndSunset
+	pollSunRiseAndSet
 
 	Purpose: initiate the asynchtttpGet() call each poll cycle.
 
 	Notes: very, very simple. only needs to run once per day.
 */
-
-def pollSunriseAndSunset() {
-  if (sunRiseAndSet == null || noonTime?.take(10) != localDate) {
+def pollSunRiseAndSet() {
     if (obs == null) {
       requestParams = [uri: "https://api.sunrise-sunset.org/json?lat=$location.latitude&lng=$location.longitude&date=$localDate&formatted=0"]
     }
@@ -335,7 +338,6 @@ def pollSunriseAndSunset() {
       requestParams = [uri: "https://api.sunrise-sunset.org/json?lat=$obs.location.lat&lng=$obs.location.lon&date=$localDate&formatted=0"]
     }
     asynchttpGet("sunRiseAndSetHandler", requestParams)
-  }
 }
 
 /*
@@ -349,11 +351,23 @@ def pollSunriseAndSunset() {
 def sunRiseAndSetHandler(resp, data) {
   if (resp.getStatus() == 200 || resp.getStatus() == 207) {
     def sunRiseAndSet = resp.getJson()
-    sunriseTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.sunrise, tZ)
-    sunsetTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.sunset, tZ)
-    noonTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.solar_noon, tZ)
-    twilight_begin = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.civil_twilight_begin, tZ)
-    twilight_end = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.civil_twilight_end, tZ)
+		def sunriseTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.sunrise, tZ)
+		def sunsetTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.sunset, tZ)
+		def noonTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.solar_noon, tZ)
+		def twilight_begin = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.civil_twilight_begin, tZ)
+		def twilight_end = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", sunRiseAndSet.results.civil_twilight_end, tZ)
+		def localSunrise = sunriseTime.format("HH:mm", location.timeZone)
+		def localSunset = sunsetTime.format("HH:mm", location.timeZone)
+		def tB = twilight_begin.format("HH:mm", location.timeZone)
+		def tE = twilight_end.format("HH:mm", location.timeZone)
+		state.sunDetail = [sunriseTime: sunriseTime, sunsetTime: sunsetTime, noonTime: noonTime, localSunrise: localSunrise, localSunset: localSunset, twilight_begin: twilight_begin, twilight_end: twilight_end, tB: tB, tE: tE]
+		state.sunriseTime = sunriseTime.format("yyyy-MM-dd'T'HH:mm:ssXXX", location.timeZone)
+		state.sunsetTime = sunsetTime.format("yyyy-MM-dd'T'HH:mm:ssXXX", location.timeZone)
+		state.noonTime = noonTime.format("yyyy-MM-dd'T'HH:mm:ssXXX", location.timeZone)
+		state.twilight_begin = twilight_begin.format("yyyy-MM-dd'T'HH:mm:ssXXX", location.timeZone)
+		state.twilight_end = twilight_end.format("yyyy-MM-dd'T'HH:mm:ssXXX", location.timeZone)
+		state.sunDetail = [sunriseTime: sunriseTime, sunsetTime: sunsetTime, noonTime: noonTime, localSunrise: localSunrise, localSunset: localSunset, twilight_begin: twilight_begin, twilight_end: twilight_end, tB: tB, tE: tE]
+		if (debugOutput) log.debug "sunRiseAndSetHandler: $state.sunDetail"
   }
   else {
     log.error "http call failed for sunrise and sunset api: $resp"
@@ -370,49 +384,56 @@ def sunRiseAndSetHandler(resp, data) {
 */
 
 def updateLux() {
-  if (descriptionTextEnable) log.info ">>>>> apixu: Calculating 'lux', location: $zipCode"
-  if (!state.sunriseTime || !state.sunsetTime || !state.noonTime || !state.twilight_begin || !state.twilight_end || !state.tz_id)
+	if (!state.sunriseTime || !state.sunsetTime || !state.noonTime || !state.twilight_begin || !state.twilight_end)
     return
 
-  calcTime()    // calculate all the time variables
+	if (descTextEnable) log.info ">>>>> apixu: Calculating 'lux', location: $zipCode"	
 
-  def lux = estimateLux(localTime, sunriseTime, sunsetTime, noonTime, twilight_begin, twilight_end, state.condition_code, state.cloud, state.tz_id)
+	def tZ = location.timeZone
+	def lT = new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
+	def localTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", lT, tZ)
+	def sunriseTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", state.sunriseTime, tZ)
+	def sunsetTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", state.sunsetTime, tZ)
+	def noonTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", state.noonTime, tZ)
+	def twilight_begin = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", state.twilight_begin, tZ)
+	def twilight_end = new Date().parse("yyyy-MM-dd'T'HH:mm:ssXXX", state.twilight_end, tZ)
+
+	def lux = estimateLux(localTime, sunriseTime, sunsetTime, noonTime, twilight_begin, twilight_end, state.condition_code, state.cloud)
   sendEventPublish(name: "illuminance", value: lux, unit: "lux", displayed: true)
   sendEventPublish(name: "illuminated", value: String.format("%,d lux", lux), displayed: true)
 }
 
 
-private estimateLux(localTime, sunriseTime, sunsetTime, noonTime, twilight_begin, twilight_end, condition_code, cloud, tz_id) {
-  if (debugOutput) log.debug "condition_code: $condition_code | cloud: $cloud"
-  if (debugOutput) log.debug "twilight_begin: $twilight_begin | twilight_end: $twilight_end | tz_id: $tz_id"
-  if (debugOutput) log.debug "localTime: $localTime | sunriseTime: $sunriseTime | noonTime: $noonTime | sunsetTime: $sunsetTime"
+private estimateLux(localTime, sunriseTime, sunsetTime, noonTime, twilight_begin, twilight_end, condition_code, cloud)     {
+//	if (debugOutput) log.debug "condition_code: $condition_code | cloud: $cloud"
+//	if (debugOutput) log.debug "twilight_begin: $twilight_begin | twilight_end: $twilight_end"
+//	if (debugOutput) log.debug "localTime: $localTime | sunriseTime: $sunriseTime | noonTime: $noonTime | sunsetTime: $sunsetTime"
 
-//	def tZ = TimeZone.getTimeZone(tz_id)
   def lux = 0l
   def aFCC = true
   def l
 
-  if (timeOfDayIsBetween(sunriseTime, noonTime, localTime, tZ)) {
+	if (timeOfDayIsBetween(sunriseTime, noonTime, localTime))      {
     if (debugOutput) log.debug "between sunrise and noon"
     l = (((localTime.getTime() - sunriseTime.getTime()) * 10000f) / (noonTime.getTime() - sunriseTime.getTime()))
     lux = (l < 50f ? 50l : l.trunc(0) as long)
   }
-  else if (timeOfDayIsBetween(noonTime, sunsetTime, localTime, tZ)) {
+	else if (timeOfDayIsBetween(noonTime, sunsetTime, localTime))      {
     if (debugOutput) log.debug "between noon and sunset"
     l = (((sunsetTime.getTime() - localTime.getTime()) * 10000f) / (sunsetTime.getTime() - noonTime.getTime()))
     lux = (l < 50f ? 50l : l.trunc(0) as long)
   }
-  else if (timeOfDayIsBetween(twilight_begin, sunriseTime, localTime, tZ)) {
+	else if (timeOfDayIsBetween(twilight_begin, sunriseTime, localTime))      {
     if (debugOutput) log.debug "between sunrise and twilight"
     l = (((localTime.getTime() - twilight_begin.getTime()) * 50f) / (sunriseTime.getTime() - twilight_begin.getTime()))
     lux = (l < 10f ? 10l : l.trunc(0) as long)
   }
-  else if (timeOfDayIsBetween(sunsetTime, twilight_end, localTime, tZ)) {
+	else if (timeOfDayIsBetween(sunsetTime, twilight_end, localTime))      {
     if (debugOutput) log.debug "between sunset and twilight"
     l = (((twilight_end.getTime() - localTime.getTime()) * 50f) / (twilight_end.getTime() - sunsetTime.getTime()))
     lux = (l < 10f ? 10l : l.trunc(0) as long)
   }
-  else if (!timeOfDayIsBetween(twilight_begin, twilight_end, localTime, tZ)) {
+	else if (!timeOfDayIsBetween(twilight_begin, twilight_end, localTime))      {
     if (debugOutput) log.debug "between non-twilight"
     lux = 5l
     aFCC = false
@@ -442,6 +463,7 @@ private estimateLux(localTime, sunriseTime, sunsetTime, noonTime, twilight_begin
   return lux
 }
 
+
 /*
 	calcTime
 
@@ -453,25 +475,12 @@ def calcTime(wxData) {
 
   now = new Date().format('yyyy-MM-dd HH:mm', location.timeZone)
 
-  tZ = TimeZone.getTimeZone(wxData.location.tz_id)
-  localTime = new Date().parse("yyyy-MM-dd HH:mm", wxData.location.localtime, tZ)
-  localDate = localTime.format("yyyy-MM-dd", tZ)
-  localTimeOnly = localTime.format("HH:mm", tZ)
-
-  // there's no need to calculate sunrise, sunset, twilight, noon, etc. a hundred times a day.
-  // once just after midnight should be good enough.
-  if (state.tz_id && (localTimeOnly >= '00:10')) {
-    localSunrise = sunriseTime.format("HH:mm", tZ)
-    localSunset = sunsetTime.format("HH:mm", tZ)
-    tB = twilight_begin.format("HH:mm", tZ)
-    tE = twilight_end.format("HH:mm", tZ)
-    state.tz_id = wxData.location.tz_id  // also used to indicate been here once
-    state.sunriseTime = sunriseTime.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
-    state.sunsetTime = sunsetTime.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
-    state.noonTime = noonTime.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
-    state.twilight_begin = twilight_begin.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
-    state.twilight_end = twilight_end.format("yyyy-MM-dd'T'HH:mm:ssXXX", tZ)
-  }
+	localTime = new Date().parse("yyyy-MM-dd HH:mm", wxData.location.localtime, location.timeZone)
+	localDate = localTime.format("yyyy-MM-dd", location.timeZone)
+	localTimeOnly = localTime.format("HH:mm", location.timeZone)
+	state.condition_code = wxData.current.condition.code
+	state.cloud = wxData.current.cloud
+	// log.debug "calcTime: $state.sunDetail"
 
   imgName = getImgName(wxData.current.condition.code, wxData.current.is_day)
   imgNamePlus1 = getImgName(wxData.forecast.forecastday[0].day.condition.code, 1)
@@ -481,14 +490,14 @@ def calcTime(wxData) {
 
   mytext = wxData.location.name + ', ' + wxData.location.region
   mytext += '<br>' + (isFahrenheit ? "${Math.round(wxData.current.temp_f)}" + '&deg;F ' : wxData.current.temp_c + '&deg;C ') + wxData.current.humidity + '%'
-  mytext += '<br>' + localSunrise + ' <img style="height:2em" src=' + imgName + '> ' + localSunset
+	mytext += '<br>' + state.sunDetail.localSunrise + ' <img style="height:2em" src=' + imgName + '> ' + state.sunDetail.localSunset
   mytext += (wind_mytile == (isFahrenheit ? "0 mph " : "0 kph ") ? '<br> Wind is calm' : '<br>' + wxData.current.wind_dir + ' ' + wind_mytile)
   mytext += '<br>' + wxData.current.condition.text
 
 }
 
 
-private timeOfDayIsBetween(fromDate, toDate, checkDate, timeZone) {
+private timeOfDayIsBetween(fromDate, toDate, checkDate)     {
   return (!checkDate.before(fromDate) && !checkDate.after(toDate))
 }
 
@@ -514,7 +523,7 @@ def SettingsOff() {
 def sendEventPublish(evt) {
   if (this[evt.name + "Publish"]) {
     sendEvent(name: evt.name, value: evt.value, descriptionText: evt.descriptionText, unit: evt.unit, displayed: evt.displayed);
-    if (debugOutput) log.debug "${evt.name + 'Publish'}" //: $evt.name, $evt.value $evt.unit"
+		if (debugOutput) log.debug "$evt.name" //: $evt.name, $evt.value $evt.unit"
   }
 }
 
@@ -530,9 +539,8 @@ def updateClock() {
   if (!state.tz_id) return;
   if (!tz_id) return;
   def nowTime = new Date()
-  def tZ = TimeZone.getTimeZone(state.tz_id)
-  sendEventPublish(name: "local_time", value: nowTime.format((state.clockSeconds ? "HH:mm" : "HH mm"), tZ), displayed: true)
-  def localDate = nowTime.format("yyyy-MM-dd", tZ)
+	sendEventPublish(name: "local_time", value: nowTime.format((state.clockSeconds ? "HH:mm" : "HH mm"), location.timeZone), displayed: true)
+	def localDate = nowTime.format("yyyy-MM-dd", location.timeZone)
   if (localDate != state.localDate) {
     state.localDate = localDate
     sendEventPublish(name: "local_date", value: localDate, displayed: true)
@@ -716,8 +724,7 @@ private getImgName(wCode, is_day) {
   "last_updated": [title: "Last updated", descr: "", default: "false"],
   "lat": [title: "Latitude", descr: "", default: "false"],
   "local_date": [title: "Local date", descr: "", default: "false"],
-  "local_sunrise": [title: "Local sunrise", descr: "Select to display the Time of Local Sunrise", default: "true"],
-  "local_sunset": [title: "Local sunset", descr: "Select to display the Time of Local Sunset", default: "true"],
+	"localSunrise":			[title: "Local Sun Rise and Set", descr: "Select to display the Group of 'Time of Local Sunrise and Sunset,' with and without Dashboard text", default: "true"],
   "local_time": [title: "Local time", descr: "", default: "false"],
   "localtime_epoch": [title: "Localtime epoch", descr: "", default: "false"],
   "location": [title: "Location name with region", descr: "", default: "false"],
@@ -753,6 +760,69 @@ private getImgName(wCode, is_day) {
   "wind": [title: "Wind (in default unit)", descr: "Select to display the Wind Speed", default: "true"]
 ]
 
+
+
+// Check Version   ***** with great thanks and acknowlegment to Cobra (CobraVmax) for his original code ****
+def updateCheck()
+{    
+	state.Version = version()
+	state.InternalName = "wx-ApiXU-Driver"
+	
+	def paramsUD = [uri: "https://csteele-pd.github.io/ApiXU/versions.json"]
+      try {
+            httpGet(paramsUD) { respUD ->
+			//log.warn " Version Checking - Response Data: ${respUD.data}"   // Troubleshooting Debug Code - Uncommenting this line should show the JSON response from your webserver 
+			state.Copyright = "${thisCopyright}"
+			def newVerRaw = (respUD.data.versions.Driver.(state.InternalName))
+			def newVer = (respUD.data.versions.Driver.(state.InternalName).replace(".", ""))
+                  def currentVer = state.Version.replace(".", "")
+                  state.UpdateInfo = (respUD.data.versions.UpdateInfo.Driver.(state.InternalName))
+                  state.author = (respUD.data.author)
+
+			if(newVer == "NLS")
+			{
+			      state.Status = "<b>** This driver is no longer supported by $state.author  **</b>"       
+			      log.warn "** This driver is no longer supported by $state.author **"      
+			}           
+			else if(currentVer < newVer)
+			{
+			      state.Status = "<b>New Version Available (Version: $newVerRaw)</b>"
+			      log.warn "** There is a newer version of this driver available  (Version: $newVerRaw) **"
+			      log.warn "** $state.UpdateInfo **"
+			} 
+			else if(currentVer > newVer)
+			{
+			      state.Status = "<b>You are using a Test version of this Driver (Version: $newVerRaw)</b>"
+			}
+			else
+			{ 
+			    state.Status = "Current"
+			    if (descTextEnable) log.info "You are using the current version of this driver"
+			}
+            } // httpGet
+      } // try
+
+      catch (e)
+      {
+           log.error "Something went wrong: CHECK THE JSON FILE AND IT'S URI -  $e"
+      }
+
+      if(state.Status == "Current")
+      {
+           state.UpdateInfo = "N/A"
+           sendEvent(name: "DriverUpdate", value: state.UpdateInfo)
+           sendEvent(name: "DriverStatus", value: state.Status)
+      }
+      else 
+      {
+           sendEvent(name: "DriverUpdate", value: state.UpdateInfo)
+           sendEvent(name: "DriverStatus", value: state.Status)
+      }
+
+ //     sendEvent(name: "DriverVersion", value: state.Version)
+}
+
+def getThisCopyright(){"&copy; 2019 C Steele "}
 //**********************************************************************************************************************
 
 /*
